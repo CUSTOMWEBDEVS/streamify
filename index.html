@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MyMusic</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#121212" />
+
+  <style>
+    :root{
+      --bg:#0b0b0b;
+      --panel:#121212;
+      --panel2:#181818;
+      --panel3:#202020;
+      --text:#eaeaea;
+      --muted:#a7a7a7;
+      --muted2:#7b7b7b;
+      --border:rgba(255,255,255,.08);
+      --green:#1db954;
+      --green2:#1ed760;
+      --danger:#ff5d5d;
+      --shadow: 0 10px 30px rgba(0,0,0,.55);
+      --radius: 14px;
+      --radius2: 18px;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(900px 550px at 15% 10%, rgba(29,185,84,.14), transparent 55%),
+        radial-gradient(700px 500px at 85% 20%, rgba(255,255,255,.06), transparent 60%),
+        var(--bg);
+      color:var(--text);
+      overflow:hidden;
+    }
+
+    /* Layout */
+    .app{
+      height:100%;
+      display:grid;
+      grid-template-columns: 290px 1fr;
+      grid-template-rows: 1fr auto;
+      grid-template-areas:
+        "side main"
+        "player player";
+    }
+
+    .sidebar{
+      grid-area:side;
+      padding:16px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      border-right:1px solid var(--border);
+      background: linear-gradient(180deg, rgba(18,18,18,.92), rgba(18,18,18,.80));
+      backdrop-filter: blur(10px);
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:10px 12px;
+      border-radius: var(--radius2);
+      background: rgba(255,255,255,.04);
+      border:1px solid var(--border);
+    }
+    .logo{
+      display:flex; gap:10px; align-items:center;
+      font-weight:900; letter-spacing:.2px;
+    }
+    .dot{
+      width:12px; height:12px; border-radius:999px;
+      background: radial-gradient(circle at 30% 30%, var(--green2), var(--green));
+      box-shadow: 0 0 22px rgba(29,185,84,.35);
+    }
+    .backendPill{
+      font-size:12px;
+      color: rgba(234,234,234,.75);
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.25);
+      white-space:nowrap;
+    }
+
+    .nav{
+      padding:10px 12px;
+      border-radius: var(--radius2);
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--border);
+    }
+    .nav .item{
+      display:flex; align-items:center; gap:10px;
+      padding:10px 10px;
+      border-radius: 12px;
+      color: rgba(234,234,234,.9);
+      cursor:pointer;
+      user-select:none;
+    }
+    .nav .item:hover{ background: rgba(255,255,255,.06); }
+    .nav .item.active{
+      background: rgba(29,185,84,.12);
+      border: 1px solid rgba(29,185,84,.25);
+    }
+    .nav .ico{ width:20px; text-align:center; opacity:.9; }
+
+    .card{
+      border-radius: var(--radius2);
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--border);
+      overflow:hidden;
+    }
+    .cardHd{
+      padding:12px 12px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,.18);
+    }
+    .cardHd .t{ font-weight:800; }
+    .cardBd{ padding:12px; }
+
+    .muted{ color: var(--muted); font-size:13px; }
+    .muted2{ color: var(--muted2); font-size:12px; }
+
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding:10px 12px;
+      border-radius: 999px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      cursor:pointer;
+      user-select:none;
+      transition: transform .08s ease, background .15s ease;
+    }
+    .btn:hover{ background: rgba(255,255,255,.08); }
+    .btn:active{ transform: scale(.98); }
+    .btn.primary{
+      background: radial-gradient(circle at 30% 10%, rgba(30,215,96,.20), rgba(29,185,84,.18));
+      border-color: rgba(29,185,84,.30);
+    }
+    .btn.primary:hover{ background: rgba(29,185,84,.22); }
+    .btn.danger{
+      background: rgba(255,93,93,.10);
+      border-color: rgba(255,93,93,.25);
+    }
+    .btn.small{ padding:8px 10px; border-radius: 12px; }
+
+    .input{
+      width:100%;
+      padding:10px 12px;
+      border-radius: 12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.25);
+      color: var(--text);
+      outline:none;
+    }
+    .input::placeholder{ color: rgba(234,234,234,.42); }
+
+    .playlistList{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      max-height: 260px;
+      overflow:auto;
+      padding-right:4px;
+    }
+    .plRow{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      padding:10px 10px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.18);
+      border:1px solid var(--border);
+      cursor:pointer;
+    }
+    .plRow:hover{ border-color: rgba(255,255,255,.18); }
+    .plName{ font-weight:700; }
+    .plId{ font-size:11px; color: rgba(234,234,234,.55); }
+
+    .main{
+      grid-area:main;
+      display:flex;
+      flex-direction:column;
+      height:100%;
+      overflow:hidden;
+    }
+
+    .topbar{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      padding:16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(18,18,18,.65);
+      backdrop-filter: blur(10px);
+    }
+
+    .searchWrap{
+      flex:1;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius: 999px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.25);
+      max-width: 720px;
+    }
+    .searchWrap span{ opacity:.75 }
+    .searchWrap input{
+      flex:1;
+      border:none;
+      outline:none;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+    }
+
+    .content{
+      flex:1;
+      overflow:auto;
+      padding:16px 16px 0 16px;
+    }
+
+    .sectionHd{
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      gap:10px;
+      margin-bottom: 12px;
+    }
+    .sectionHd .h{
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: .2px;
+    }
+
+    .chips{ display:flex; gap:8px; flex-wrap:wrap; }
+    .chip{
+      padding:8px 10px;
+      border-radius: 999px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: rgba(234,234,234,.92);
+      cursor:pointer;
+      user-select:none;
+      font-size: 13px;
+    }
+    .chip.active{
+      background: rgba(29,185,84,.16);
+      border-color: rgba(29,185,84,.28);
+    }
+
+    .gridCards{
+      display:grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap:12px;
+    }
+    @media (max-width: 1200px){ .gridCards{ grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+    @media (max-width: 980px){ .app{ grid-template-columns: 1fr; grid-template-areas:"main" "player"; } .sidebar{ display:none; } .gridCards{ grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 640px){ .gridCards{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+    .trackCard{
+      padding:12px;
+      border-radius: var(--radius2);
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--border);
+      cursor:pointer;
+      position:relative;
+      overflow:hidden;
+      transition: transform .10s ease, background .15s ease;
+    }
+    .trackCard:hover{
+      transform: translateY(-1px);
+      background: rgba(255,255,255,.06);
+      border-color: rgba(255,255,255,.14);
+    }
+
+    .art{
+      width:100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 14px;
+      background: rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.06);
+      overflow:hidden;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .art img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .cardTitle{
+      margin-top:10px;
+      font-weight: 800;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .cardSub{
+      margin-top:4px;
+      font-size: 13px;
+      color: var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .cardActions{
+      display:flex;
+      gap:8px;
+      margin-top:10px;
+      opacity: .98;
+    }
+    .ghostBtn{
+      flex:1;
+      padding:9px 10px;
+      border-radius: 12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.20);
+      color: rgba(234,234,234,.92);
+      cursor:pointer;
+    }
+    .ghostBtn:hover{ background: rgba(255,255,255,.06); }
+    .heartBtn{ width:42px; flex:0 0 auto; }
+
+    /* Player bar */
+    .player{
+      grid-area:player;
+      padding:12px 14px;
+      border-top: 1px solid var(--border);
+      background: rgba(18,18,18,.88);
+      backdrop-filter: blur(12px);
+    }
+    .playerRow{
+      display:grid;
+      grid-template-columns: 1fr 1.4fr 1fr;
+      gap:12px;
+      align-items:center;
+    }
+    @media (max-width: 980px){ .playerRow{ grid-template-columns: 1fr; gap:10px; } }
+
+    .pLeft{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      min-width:0;
+    }
+    .pArt{
+      width:54px; height:54px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.08);
+      overflow:hidden;
+      flex:0 0 auto;
+    }
+    .pArt img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .pMeta{ min-width:0; }
+    .pTitle{
+      font-weight:900;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .pSub{
+      font-size: 13px;
+      color: var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .pMid{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:center;
+    }
+    .controls{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:center;
+      flex-wrap:wrap;
+    }
+    .ctrl{
+      width:40px;height:40px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+    }
+    .ctrl:hover{ background: rgba(255,255,255,.08); }
+    .ctrl.play{
+      width:46px;height:46px;
+      background: rgba(29,185,84,.20);
+      border-color: rgba(29,185,84,.30);
+    }
+    .ctrl.play:hover{ background: rgba(29,185,84,.28); }
+
+    .seek{
+      width:100%;
+      max-width: 520px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .bar{
+      flex:1;
+      height:6px;
+      border-radius:999px;
+      background: rgba(255,255,255,.12);
+      overflow:hidden;
+      cursor:pointer;
+    }
+    .bar > div{
+      height:100%;
+      width:0%;
+      background: linear-gradient(90deg, rgba(29,185,84,.95), rgba(30,215,96,.95));
+    }
+    .time{ font-size: 12px; color: rgba(234,234,234,.7); }
+
+    .pRight{
+      display:flex;
+      justify-content:flex-end;
+      align-items:center;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .toggle{
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: rgba(234,234,234,.9);
+      font-size: 12px;
+      cursor:pointer;
+      user-select:none;
+    }
+    .toggle.on{
+      background: rgba(29,185,84,.16);
+      border-color: rgba(29,185,84,.28);
+    }
+    .vol{
+      width:140px;
+    }
+
+    /* Modal */
+    .modalBackdrop{
+      position:fixed; inset:0;
+      background: rgba(0,0,0,.66);
+      backdrop-filter: blur(6px);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index: 1000;
+      padding: 18px;
+    }
+    .modalBackdrop.show{ display:flex; }
+    .modal{
+      width: min(520px, 100%);
+      border-radius: 22px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: linear-gradient(180deg, rgba(24,24,24,.95), rgba(18,18,18,.92));
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .modalHd{
+      padding: 14px 16px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      border-bottom: 1px solid var(--border);
+    }
+    .modalHd .title{ font-weight: 900; }
+    .xbtn{
+      width:38px;height:38px;border-radius: 12px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+    }
+    .xbtn:hover{ background: rgba(255,255,255,.08); }
+
+    .modalBd{ padding: 16px; }
+    .modalRow{ display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+    .statusLine{ margin-top:10px; font-size: 12px; color: rgba(234,234,234,.70); }
+
+    /* Small footer space in content */
+    .contentPad{ height: 16px; }
+
+    /* Scrollbar (subtle) */
+    .content::-webkit-scrollbar, .playlistList::-webkit-scrollbar{ width: 10px; }
+    .content::-webkit-scrollbar-thumb, .playlistList::-webkit-scrollbar-thumb{
+      background: rgba(255,255,255,.10);
+      border-radius: 999px;
+      border: 2px solid rgba(0,0,0,.3);
+    }
+  </style>
+</head>
+
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo"><span class="dot"></span> MyMusic</div>
+      <div id="backendLabel" class="backendPill">backend: not set</div>
+    </div>
+
+    <div class="nav">
+      <div class="item active" id="navHome"><span class="ico">⌂</span><span>Home</span></div>
+      <div class="item" id="navCatalog"><span class="ico">♫</span><span>Catalog</span></div>
+      <div class="item" id="navLikes"><span class="ico">♥</span><span>Liked Songs</span></div>
+    </div>
+
+    <div class="card">
+      <div class="cardHd">
+        <div>
+          <div class="t">Account</div>
+          <div class="muted2" id="meLine">Not logged in</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn small primary" id="btnAuthOpen">Log in</button>
+          <button class="btn small danger" id="btnLogout" style="display:none">Logout</button>
+        </div>
+      </div>
+      <div class="cardBd">
+        <div class="muted">
+          Your catalog streams from <b>Google Drive</b> (via <code>driveFileId</code>).
+          Importing Spotify playlists is metadata only.
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn small" id="btnInstall" style="display:none">Install App</button>
+          <a class="btn small" id="btnAdminImporter" href="#" target="_blank" style="text-decoration:none">Importer</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="cardHd">
+        <div>
+          <div class="t">Your Library</div>
+          <div class="muted2">Playlists</div>
+        </div>
+        <button class="btn small" id="btnRefreshPlaylists" style="display:none">Refresh</button>
+      </div>
+      <div class="cardBd">
+        <div class="modalRow" style="margin-top:0">
+          <input class="input" id="plName" placeholder="New playlist name" />
+          <button class="btn primary" id="btnCreatePlaylist" style="display:none">Create</button>
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="playlistList" id="playlistList"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="topbar">
+      <div class="searchWrap">
+        <span>🔎</span>
+        <input id="q" placeholder="What do you want to play?" />
+      </div>
+      <button class="btn" id="btnSearch">Search</button>
+      <button class="btn secondary" id="btnClearSearch">Clear</button>
+    </div>
+
+    <div class="content">
+      <div class="sectionHd">
+        <div>
+          <div class="h" id="viewTitle">Home</div>
+          <div class="muted" id="viewSub">Pick something and hit play.</div>
+        </div>
+        <div class="chips">
+          <div class="chip active" id="chipHome">Home</div>
+          <div class="chip" id="chipCatalog">Catalog</div>
+          <div class="chip" id="chipLikes" style="display:none">Likes</div>
+        </div>
+      </div>
+
+      <div id="listStatus" class="muted2" style="margin-bottom:10px"></div>
+      <div class="gridCards" id="trackGrid"></div>
+      <div class="contentPad"></div>
+    </div>
+  </main>
+
+  <!-- Player -->
+  <footer class="player">
+    <div class="playerRow">
+      <div class="pLeft">
+        <div class="pArt" id="pArt"></div>
+        <div class="pMeta">
+          <div class="pTitle" id="pTitle">Nothing playing</div>
+          <div class="pSub" id="pSub">—</div>
+        </div>
+      </div>
+
+      <div class="pMid">
+        <div class="controls">
+          <button class="ctrl" id="btnPrev" title="Previous">⏮</button>
+          <button class="ctrl play" id="btnPlay" title="Play/Pause">▶</button>
+          <button class="ctrl" id="btnNext" title="Next">⏭</button>
+        </div>
+        <div class="seek">
+          <div class="time" id="tCur">0:00</div>
+          <div class="bar" id="seekBar"><div id="seekFill"></div></div>
+          <div class="time" id="tDur">0:00</div>
+        </div>
+      </div>
+
+      <div class="pRight">
+        <div class="toggle" id="tglShuffle">Shuffle</div>
+        <div class="toggle" id="tglRepeat">Repeat</div>
+        <div class="toggle on" id="tglCache">Cache</div>
+        <input class="vol" id="vol" type="range" min="0" max="1" step="0.01" value="1" />
+      </div>
+    </div>
+    <div class="muted2" id="cacheLine" style="margin-top:8px"></div>
+  </footer>
+
+</div>
+
+<!-- Auth Modal -->
+<div class="modalBackdrop" id="authModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Login">
+    <div class="modalHd">
+      <div class="title">Sign in</div>
+      <button class="xbtn" id="btnAuthClose" aria-label="Close">✕</button>
+    </div>
+    <div class="modalBd">
+      <div class="muted">Use your MyMusic account (stored in your Sheets).</div>
+
+      <div class="modalRow">
+        <input class="input" id="email" placeholder="Email" />
+        <input class="input" id="pass" placeholder="Password" type="password" />
+      </div>
+
+      <div class="modalRow">
+        <button class="btn primary" id="btnLogin" style="flex:1">Log in</button>
+        <button class="btn" id="btnSignup" style="flex:1">Sign up</button>
+      </div>
+
+      <div class="statusLine" id="authStatus"></div>
+      <div class="muted2" style="margin-top:10px">
+        Tip: after login, you can open the <b>Importer</b> to paste Spotify CSV and add metadata to Tracks.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
