@@ -1,726 +1,559 @@
-/******************************************************
- * MyMusic Frontend (Spotify-ish UI)
- * - JSONP to Apps Script (no CORS)
- * - Drive audio playback (driveFileId)
- * - IndexedDB audio caching toggle
- ******************************************************/
+/* Streamify app.js - FULL FILE
+   Supports:
+   - GAS+Sheets JSONP backend
+   - Auth modal (login/signup)
+   - Catalog + search
+   - Audio tracks + Spotify embed tracks
+*/
 
-// 1) SET THIS to your Apps Script Web App URL:
-const BACKEND_URL = "https://script.google.com/macros/s/AKfycbz1b6U20wPzTbj80zPmkFjr1dA36fMcANZN1m_qzqCUh13ig7DNw5XhBYZ1Eh5F-r28/exec"; // .../exec
-
-// If you want the Importer link to point to the same GAS deployment:
-const IMPORTER_URL = () => `${BACKEND_URL}${BACKEND_URL.includes("?") ? "&" : "?"}page=admin`;
-
-const $ = (q)=>document.querySelector(q);
-
-const el = {
-  backendLabel: $("#backendLabel"),
-  meLine: $("#meLine"),
-  btnAuthOpen: $("#btnAuthOpen"),
-  btnLogout: $("#btnLogout"),
-
-  navHome: $("#navHome"),
-  navCatalog: $("#navCatalog"),
-  navLikes: $("#navLikes"),
-
-  chipHome: $("#chipHome"),
-  chipCatalog: $("#chipCatalog"),
-  chipLikes: $("#chipLikes"),
-
-  viewTitle: $("#viewTitle"),
-  viewSub: $("#viewSub"),
-  listStatus: $("#listStatus"),
-
-  q: $("#q"),
-  btnSearch: $("#btnSearch"),
-  btnClearSearch: $("#btnClearSearch"),
-  trackGrid: $("#trackGrid"),
-
-  plName: $("#plName"),
-  btnCreatePlaylist: $("#btnCreatePlaylist"),
-  btnRefreshPlaylists: $("#btnRefreshPlaylists"),
-  playlistList: $("#playlistList"),
-
-  pArt: $("#pArt"),
-  pTitle: $("#pTitle"),
-  pSub: $("#pSub"),
-  btnPrev: $("#btnPrev"),
-  btnPlay: $("#btnPlay"),
-  btnNext: $("#btnNext"),
-  seekBar: $("#seekBar"),
-  seekFill: $("#seekFill"),
-  tCur: $("#tCur"),
-  tDur: $("#tDur"),
-  vol: $("#vol"),
-  tglShuffle: $("#tglShuffle"),
-  tglRepeat: $("#tglRepeat"),
-  tglCache: $("#tglCache"),
-  cacheLine: $("#cacheLine"),
-
-  btnInstall: $("#btnInstall"),
-  btnAdminImporter: $("#btnAdminImporter"),
-
-  // Modal
-  authModal: $("#authModal"),
-  btnAuthClose: $("#btnAuthClose"),
-  email: $("#email"),
-  pass: $("#pass"),
-  btnLogin: $("#btnLogin"),
-  btnSignup: $("#btnSignup"),
-  authStatus: $("#authStatus"),
+const CONFIG = {
+  // ✅ PUT YOUR WEB APP /exec URL HERE:
+  // Example: "https://script.google.com/macros/s/AKfycb.../exec"
+  API_URL: "https://script.google.com/macros/s/AKfycbz1b6U20wPzTbj80zPmkFjr1dA36fMcANZN1m_qzqCUh13ig7DNw5XhBYZ1Eh5F-r28/exec",
+  TOKEN_KEY: "mymusic_token",
+  EMAIL_KEY: "mymusic_email",
 };
-
-function setBackendLabel(){
-  el.backendLabel.textContent = BACKEND_URL.includes("http") ? "backend: connected" : "backend: not set";
-}
-setBackendLabel();
-el.btnAdminImporter.href = BACKEND_URL.includes("http") ? IMPORTER_URL() : "#";
 
 const state = {
-  token: localStorage.getItem("mymusic_token") || "",
-  me: null,
-
-  view: "home", // home | catalog | likes | playlist
-  currentPlaylistId: null,
-
-  catalog: [],
+  token: localStorage.getItem(CONFIG.TOKEN_KEY) || "",
+  email: localStorage.getItem(CONFIG.EMAIL_KEY) || "",
+  mode: "all",           // "all" | "likes"
+  tracks: [],
   likes: new Set(),
-  playlists: [],
-  playlistTracks: new Map(),
-
   queue: [],
-  idx: -1,
-  shuffle: false,
-  repeat: false,
-  cacheAudio: true,
-
-  audio: new Audio(),
+  currentIndex: -1,
+  playingMode: "none",   // "audio" | "embed" | "none"
 };
 
-state.audio.preload = "metadata";
-state.audio.crossOrigin = "anonymous";
+const el = {
+  grid: document.getElementById("grid"),
+  empty: document.getElementById("empty"),
+  search: document.getElementById("search"),
+  btnClear: document.getElementById("btnClear"),
+  btnRefresh: document.getElementById("btnRefresh"),
+  btnHome: document.getElementById("btnHome"),
+  btnLikes: document.getElementById("btnLikes"),
+  countPill: document.getElementById("countPill"),
+  likesPill: document.getElementById("likesPill"),
 
-// -------- Install prompt ----------
-let deferredPrompt = null;
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
-  el.btnInstall.style.display = "inline-flex";
-});
-el.btnInstall.addEventListener("click", async () => {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  deferredPrompt = null;
-  el.btnInstall.style.display = "none";
-});
+  btnAuth: document.getElementById("btnAuth"),
+  authLabel: document.getElementById("authLabel"),
+  authTag: document.getElementById("authTag"),
+  btnLogout: document.getElementById("btnLogout"),
+  userEmail: document.getElementById("userEmail"),
 
-// -------- JSONP ----------
+  btnImporter: document.getElementById("btnImporter"),
+
+  // Player
+  audio: document.getElementById("audio"),
+  btnPrev: document.getElementById("btnPrev"),
+  btnPlay: document.getElementById("btnPlay"),
+  btnNext: document.getElementById("btnNext"),
+  seek: document.getElementById("seek"),
+  tCur: document.getElementById("tCur"),
+  tDur: document.getElementById("tDur"),
+  npImg: document.getElementById("npImg"),
+  npTitle: document.getElementById("npTitle"),
+  npArtist: document.getElementById("npArtist"),
+
+  // Auth modal
+  authModal: document.getElementById("authModal"),
+  authClose: document.getElementById("authClose"),
+  authTitle: document.getElementById("authTitle"),
+  authEmail: document.getElementById("authEmail"),
+  authPass: document.getElementById("authPass"),
+  authErr: document.getElementById("authErr"),
+  btnLogin: document.getElementById("btnLogin"),
+  btnSignup: document.getElementById("btnSignup"),
+
+  // Embed modal
+  embedModal: document.getElementById("embedModal"),
+  embedClose: document.getElementById("embedClose"),
+  embedTitle: document.getElementById("embedTitle"),
+  embedFrame: document.getElementById("embedFrame"),
+};
+
+// ----------------------- JSONP -----------------------
 function jsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
-    if (!BACKEND_URL.includes("http")) return reject(new Error("BACKEND_URL not set in app.js"));
-    const cbName = "cb_" + Math.random().toString(36).slice(2);
+    if (!CONFIG.API_URL || CONFIG.API_URL.includes("PASTE_YOUR_GAS_EXEC_URL_HERE")) {
+      reject(new Error("Set CONFIG.API_URL in app.js to your GAS /exec URL."));
+      return;
+    }
+
+    const cbName = "__cb_" + Math.random().toString(36).slice(2);
+    const url = new URL(CONFIG.API_URL);
+
+    url.searchParams.set("action", action);
+    url.searchParams.set("callback", cbName);
+
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null) continue;
+      url.searchParams.set(k, String(v));
+    }
+
     const script = document.createElement("script");
-    const qs = new URLSearchParams({ action, callback: cbName, ...params });
-    const url = `${BACKEND_URL}?${qs.toString()}`;
+    const cleanup = () => {
+      try { delete window[cbName]; } catch (_) {}
+      script.remove();
+    };
 
     window[cbName] = (data) => {
       cleanup();
-      if (!data || data.ok === false) reject(new Error(data?.error || "Request failed"));
+      if (!data || data.ok === false) reject(new Error((data && data.error) || "API error"));
       else resolve(data);
     };
 
-    function cleanup(){
-      try { delete window[cbName]; } catch {}
-      if (script.parentNode) script.parentNode.removeChild(script);
-    }
-
-    script.onerror = () => { cleanup(); reject(new Error("Network/JSONP error")); };
-    script.src = url;
-    document.body.appendChild(script);
-  });
-}
-
-// -------- IndexedDB audio cache ----------
-const DB_NAME = "mymusic_cache_v2";
-const STORE = "audio";
-
-function idbOpen() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Network error loading JSONP script"));
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbGet(key) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const st = tx.objectStore(STORE);
-    const req = st.get(key);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbSet(key, val) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const st = tx.objectStore(STORE);
-    const req = st.put(val, key);
-    req.onsuccess = () => resolve(true);
-    req.onerror = () => reject(req.error);
+
+    script.src = url.toString();
+    document.head.appendChild(script);
   });
 }
 
-// -------- Helpers ----------
-function escapeHtml(s){
-  return String(s ?? "").replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  }[c]));
-}
-function escapeAttr(s){ return escapeHtml(s); }
-
-function fmtTime(sec){
+// ----------------------- Helpers -----------------------
+function fmtTime(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
   const m = Math.floor(sec / 60);
-  const r = sec % 60;
-  return `${m}:${String(r).padStart(2,"0")}`;
-}
-function setStatus(s){ el.listStatus.textContent = s || ""; }
-function setAuthStatus(s){ el.authStatus.textContent = s || ""; }
-
-function setActiveNav(which){
-  const all = [el.navHome, el.navCatalog, el.navLikes];
-  all.forEach(x => x.classList.remove("active"));
-  if (which === "home") el.navHome.classList.add("active");
-  if (which === "catalog") el.navCatalog.classList.add("active");
-  if (which === "likes") el.navLikes.classList.add("active");
-  if (which === "playlist") el.navCatalog.classList.add("active"); // treat playlist as catalog section
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function setActiveChip(which){
-  [el.chipHome, el.chipCatalog, el.chipLikes].forEach(x => x.classList.remove("active"));
-  if (which === "home") el.chipHome.classList.add("active");
-  if (which === "catalog") el.chipCatalog.classList.add("active");
-  if (which === "likes") el.chipLikes.classList.add("active");
+function coverFor(t) {
+  return t.artworkUrl || "";
 }
 
-// -------- Modal ----------
-function openAuthModal(){
-  el.authModal.classList.add("show");
-  setAuthStatus("");
-  setTimeout(() => el.email.focus(), 50);
+function displayTitle(t) {
+  if (t.title) return t.title;
+  // For embed rows imported by ID only, title might be blank.
+  if (t.spotifyUrl) return "Spotify Track";
+  return "Unknown Track";
 }
-function closeAuthModal(){
-  el.authModal.classList.remove("show");
-}
-el.btnAuthOpen.onclick = openAuthModal;
-el.btnAuthClose.onclick = closeAuthModal;
-el.authModal.addEventListener("click", (e)=>{ if (e.target === el.authModal) closeAuthModal(); });
-window.addEventListener("keydown", (e)=>{ if (e.key === "Escape") closeAuthModal(); });
-
-// -------- Data ----------
-async function loadMe(){
-  if (!state.token) return null;
-  const res = await jsonp("me", { token: state.token });
-  state.me = { userId: res.userId, email: res.email };
-  return state.me;
-}
-async function loadCatalog(){
-  const res = await jsonp("catalog", { token: state.token, limit: 500, offset: 0 });
-  state.catalog = res.tracks || [];
-  localStorage.setItem("mymusic_catalog", JSON.stringify(state.catalog));
-  return state.catalog;
-}
-async function loadLikes(){
-  const res = await jsonp("likes", { token: state.token });
-  state.likes = new Set(res.trackIds || []);
-  return state.likes;
-}
-async function loadPlaylists(){
-  const res = await jsonp("playlists", { token: state.token });
-  state.playlists = res.playlists || [];
-  return state.playlists;
-}
-async function loadPlaylistTracks(playlistId){
-  const res = await jsonp("playlist_get", { token: state.token, playlistId });
-  state.playlistTracks.set(playlistId, res.trackIds || []);
-  return res;
+function displayArtist(t) {
+  if (t.artist) return t.artist;
+  if (t.spotifyUrl) return "Spotify";
+  return "Unknown Artist";
 }
 
-function trackById(id){
-  return state.catalog.find(t => String(t.trackId) === String(id)) || null;
+function isSpotifyEmbed(t) {
+  return (t.sourceType === "spotify_embed") || (t.embedUrl && t.embedUrl.includes("open.spotify.com/embed"));
+}
+function isMetaOnly(t) {
+  return (t.sourceType === "meta_only") || (!t.audioUrl && !t.embedUrl);
+}
+function isAudioTrack(t) {
+  return !!t.audioUrl && (!t.sourceType || t.sourceType === "audio");
 }
 
-function getViewTracks(){
-  if (state.view === "home") return state.catalog.slice(0, 30);
-  if (state.view === "catalog") return state.catalog;
-  if (state.view === "likes") return state.catalog.filter(t => state.likes.has(String(t.trackId)));
-  if (state.view === "playlist") {
-    const ids = state.playlistTracks.get(state.currentPlaylistId) || [];
-    return ids.map(id => trackById(id)).filter(Boolean);
-  }
-  return state.catalog;
-}
-
-// -------- Render ----------
-function updateHeader(){
-  if (state.view === "home"){
-    el.viewTitle.textContent = "Home";
-    el.viewSub.textContent = "Pick something and hit play.";
-    setActiveNav("home");
-    setActiveChip("home");
-  } else if (state.view === "catalog"){
-    el.viewTitle.textContent = "Catalog";
-    el.viewSub.textContent = "Your Drive-backed library.";
-    setActiveNav("catalog");
-    setActiveChip("catalog");
-  } else if (state.view === "likes"){
-    el.viewTitle.textContent = "Liked Songs";
-    el.viewSub.textContent = "Tracks you hearted.";
-    setActiveNav("likes");
-    setActiveChip("likes");
-  } else if (state.view === "playlist"){
-    const pl = state.playlists.find(p => p.playlistId === state.currentPlaylistId);
-    el.viewTitle.textContent = pl ? pl.name : "Playlist";
-    el.viewSub.textContent = "Playlist tracks.";
-    setActiveNav("playlist");
-    setActiveChip("catalog");
+function requireTokenOrAuth() {
+  if (!state.token) {
+    openAuthModal();
+    throw new Error("Not signed in");
   }
 }
 
-function renderPlaylists(){
-  el.playlistList.innerHTML = "";
-  if (!state.playlists.length){
-    el.playlistList.innerHTML = `<div class="muted">No playlists yet.</div>`;
-    return;
-  }
-  for (const pl of state.playlists){
-    const div = document.createElement("div");
-    div.className = "plRow";
-    div.innerHTML = `
-      <div style="min-width:0">
-        <div class="plName">${escapeHtml(pl.name)}</div>
-        <div class="plId">${escapeHtml(pl.playlistId)}</div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn small" data-open="${escapeAttr(pl.playlistId)}">Open</button>
-      </div>
-    `;
-    div.querySelector("[data-open]").onclick = async (ev) => {
-      ev.stopPropagation();
-      state.view = "playlist";
-      state.currentPlaylistId = pl.playlistId;
-      if (!state.playlistTracks.has(pl.playlistId)) await loadPlaylistTracks(pl.playlistId);
-      renderTracks();
-    };
-    div.onclick = async () => {
-      state.view = "playlist";
-      state.currentPlaylistId = pl.playlistId;
-      if (!state.playlistTracks.has(pl.playlistId)) await loadPlaylistTracks(pl.playlistId);
-      renderTracks();
-    };
-    el.playlistList.appendChild(div);
-  }
+// ----------------------- Auth UI -----------------------
+function openAuthModal() {
+  el.authErr.textContent = "";
+  el.authModal.style.display = "flex";
+  el.authTitle.textContent = "Sign in";
+  el.authEmail.value = state.email || "";
+  el.authPass.value = "";
+  setTimeout(() => el.authEmail.focus(), 50);
 }
 
-function renderTracks(list = null){
-  const tracks = list || getViewTracks();
-  el.trackGrid.innerHTML = "";
-  updateHeader();
-
-  if (!tracks.length){
-    el.trackGrid.innerHTML = `<div class="muted">Nothing here yet.</div>`;
-    setStatus("");
-    return;
-  }
-
-  for (const t of tracks){
-    const liked = state.likes.has(String(t.trackId));
-    const card = document.createElement("div");
-    card.className = "trackCard";
-    card.innerHTML = `
-      <div class="art">${t.artworkUrl ? `<img src="${escapeAttr(t.artworkUrl)}" />` : `<div class="muted2">No art</div>`}</div>
-      <div class="cardTitle">${escapeHtml(t.title || "Untitled")}</div>
-      <div class="cardSub">${escapeHtml(t.artist || "Unknown")}${t.album ? " • " + escapeHtml(t.album) : ""}</div>
-      <div class="cardActions">
-        <button class="ghostBtn" data-play="${escapeAttr(t.trackId)}">Play</button>
-        <button class="ghostBtn heartBtn" data-like="${escapeAttr(t.trackId)}">${liked ? "♥" : "♡"}</button>
-        <button class="ghostBtn" data-add="${escapeAttr(t.trackId)}">＋</button>
-      </div>
-    `;
-
-    // click card = play
-    card.addEventListener("dblclick", () => {
-      setQueue(tracks, t.trackId);
-      playIndex(state.idx);
-    });
-
-    card.querySelector("[data-play]").onclick = (ev) => {
-      ev.stopPropagation();
-      setQueue(tracks, t.trackId);
-      playIndex(state.idx);
-    };
-
-    card.querySelector("[data-like]").onclick = async (ev) => {
-      ev.stopPropagation();
-      if (!state.token) { openAuthModal(); return; }
-      const id = String(t.trackId);
-      try{
-        if (state.likes.has(id)){
-          await jsonp("unlike", { token: state.token, trackId: id });
-          state.likes.delete(id);
-        } else {
-          await jsonp("like", { token: state.token, trackId: id });
-          state.likes.add(id);
-        }
-        renderTracks(tracks);
-      } catch(e){
-        alert(e.message);
-      }
-    };
-
-    card.querySelector("[data-add]").onclick = async (ev) => {
-      ev.stopPropagation();
-      if (!state.token) { openAuthModal(); return; }
-      if (!state.currentPlaylistId){
-        alert("Open a playlist in the sidebar first, then add songs to it.");
-        return;
-      }
-      try{
-        await jsonp("playlist_add", {
-          token: state.token,
-          playlistId: state.currentPlaylistId,
-          trackId: String(t.trackId)
-        });
-        await loadPlaylistTracks(state.currentPlaylistId);
-        el.cacheLine.textContent = "Added to playlist.";
-        setTimeout(() => el.cacheLine.textContent = "", 1200);
-      } catch(e){
-        alert(e.message);
-      }
-    };
-
-    el.trackGrid.appendChild(card);
-  }
-
-  setStatus(`${tracks.length} track(s)`);
+function closeAuthModal() {
+  el.authModal.style.display = "none";
 }
 
-// -------- Player ----------
-function setQueue(tracks, startTrackId){
-  state.queue = tracks.map(t => String(t.trackId));
-  const idx = state.queue.findIndex(id => id === String(startTrackId));
-  state.idx = idx >= 0 ? idx : 0;
+function setSignedOut() {
+  state.token = "";
+  state.email = "";
+  localStorage.removeItem(CONFIG.TOKEN_KEY);
+  localStorage.removeItem(CONFIG.EMAIL_KEY);
+  state.likes = new Set();
+  updateAuthUI();
 }
 
-function currentTrackId(){
-  if (state.idx < 0 || state.idx >= state.queue.length) return null;
-  return state.queue[state.idx];
+function setSignedIn(token, email) {
+  state.token = token;
+  state.email = email;
+  localStorage.setItem(CONFIG.TOKEN_KEY, token);
+  localStorage.setItem(CONFIG.EMAIL_KEY, email);
+  updateAuthUI();
 }
 
-async function resolveTrack(trackId){
-  const res = await jsonp("track", { token: state.token, id: String(trackId) });
-  return res.track;
-}
-
-async function getPlayableUrl(track){
-  const cacheKey = `audio:${track.trackId}`;
-  if (state.cacheAudio){
-    const blob = await idbGet(cacheKey);
-    if (blob){
-      el.cacheLine.textContent = "Playing cached audio";
-      return URL.createObjectURL(blob);
-    }
-  }
-
-  el.cacheLine.textContent = state.cacheAudio ? "Downloading (will cache)..." : "Streaming...";
-  const url = track.streamUrl;
-
-  if (!state.cacheAudio) return url;
-
-  const resp = await fetch(url);
-  if (!resp.ok){
-    throw new Error("Failed to fetch audio. Make sure the Drive file is shared 'Anyone with the link'.");
-  }
-  const blob = await resp.blob();
-  await idbSet(cacheKey, blob);
-  el.cacheLine.textContent = "Cached for offline";
-  setTimeout(()=> el.cacheLine.textContent="", 1200);
-  return URL.createObjectURL(blob);
-}
-
-async function playIndex(i){
-  if (!state.queue.length) return;
-  if (!state.token){ openAuthModal(); return; }
-
-  state.idx = (i + state.queue.length) % state.queue.length;
-  const id = currentTrackId();
-  const meta = trackById(id);
-  if (!meta) return;
-
-  el.pTitle.textContent = meta.title || "Untitled";
-  el.pSub.textContent = `${meta.artist || "Unknown"}${meta.album ? " • " + meta.album : ""}`;
-  el.pArt.innerHTML = meta.artworkUrl ? `<img src="${escapeAttr(meta.artworkUrl)}" />` : "";
-
-  const track = await resolveTrack(id);
-  const playUrl = await getPlayableUrl(track);
-
-  state.audio.src = playUrl;
-  await state.audio.play();
-  el.btnPlay.textContent = "⏸";
-}
-
-function togglePlay(){
-  if (!state.audio.src){
-    const tracks = getViewTracks();
-    if (!tracks.length) return;
-    setQueue(tracks, tracks[0].trackId);
-    playIndex(0);
-    return;
-  }
-  if (state.audio.paused){
-    state.audio.play();
-    el.btnPlay.textContent = "⏸";
+function updateAuthUI() {
+  if (state.token) {
+    el.authLabel.textContent = "Account";
+    el.authTag.textContent = "Signed in";
+    el.userEmail.textContent = state.email || "Signed in";
+    el.btnLogout.style.display = "flex";
   } else {
-    state.audio.pause();
+    el.authLabel.textContent = "Sign in";
+    el.authTag.textContent = "Guest";
+    el.userEmail.textContent = "Not signed in";
+    el.btnLogout.style.display = "none";
+  }
+}
+
+// ----------------------- Embed modal -----------------------
+function openEmbed(track) {
+  const title = `${displayTitle(track)} — ${displayArtist(track)}`;
+  el.embedTitle.textContent = title;
+  el.embedFrame.src = track.embedUrl || "";
+  el.embedModal.style.display = "flex";
+
+  // Stop audio if any
+  try { el.audio.pause(); } catch (_) {}
+  try { el.audio.src = ""; } catch (_) {}
+
+  state.playingMode = "embed";
+  renderNowPlaying(track);
+}
+
+function closeEmbed() {
+  el.embedModal.style.display = "none";
+  el.embedFrame.src = "";
+  if (state.playingMode === "embed") state.playingMode = "none";
+}
+
+// ----------------------- Data load -----------------------
+async function loadCatalog() {
+  requireTokenOrAuth();
+  const res = await jsonp("catalog", { token: state.token, limit: 800, offset: 0 });
+  state.tracks = Array.isArray(res.tracks) ? res.tracks : [];
+  el.countPill.textContent = String(state.tracks.length);
+}
+
+async function loadLikes() {
+  if (!state.token) { state.likes = new Set(); el.likesPill.textContent = "0"; return; }
+  const res = await jsonp("likes", { token: state.token });
+  const ids = Array.isArray(res.trackIds) ? res.trackIds : [];
+  state.likes = new Set(ids);
+  el.likesPill.textContent = String(state.likes.size);
+}
+
+// ----------------------- Render -----------------------
+function currentList() {
+  let list = state.tracks;
+
+  // Search filter
+  const q = (el.search.value || "").trim().toLowerCase();
+  if (q) {
+    list = list.filter(t => {
+      const s = `${t.title||""} ${t.artist||""} ${t.album||""}`.toLowerCase();
+      return s.includes(q);
+    });
+  }
+
+  // Mode filter
+  if (state.mode === "likes") {
+    list = list.filter(t => state.likes.has(t.trackId));
+  }
+
+  return list;
+}
+
+function renderGrid() {
+  const list = currentList();
+  el.grid.innerHTML = "";
+  el.empty.style.display = list.length ? "none" : "block";
+
+  for (let idx = 0; idx < list.length; idx++) {
+    const t = list[idx];
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const cover = document.createElement("div");
+    cover.className = "cover";
+    const imgUrl = coverFor(t);
+    if (imgUrl) {
+      const img = document.createElement("img");
+      img.src = imgUrl;
+      img.loading = "lazy";
+      cover.appendChild(img);
+    }
+    card.appendChild(cover);
+
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = displayTitle(t);
+    card.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${displayArtist(t)}${t.album ? " • " + t.album : ""}`;
+    card.appendChild(meta);
+
+    const row = document.createElement("div");
+    row.className = "row2";
+
+    const tag = document.createElement("div");
+    tag.className = "tag";
+    if (isAudioTrack(t)) { tag.classList.add("tagGreen"); tag.textContent = "AUDIO"; }
+    else if (isSpotifyEmbed(t)) { tag.classList.add("tagGreen"); tag.textContent = "SPOTIFY"; }
+    else { tag.classList.add("tagRed"); tag.textContent = "UNPLAYABLE"; }
+
+    const like = document.createElement("button");
+    like.className = "btn";
+    like.style.padding = "6px 10px";
+    like.textContent = state.likes.has(t.trackId) ? "♥" : "♡";
+    like.title = "Like";
+    like.onclick = async (ev) => {
+      ev.stopPropagation();
+      try {
+        requireTokenOrAuth();
+        if (state.likes.has(t.trackId)) {
+          await jsonp("unlike", { token: state.token, trackId: t.trackId });
+          state.likes.delete(t.trackId);
+        } else {
+          await jsonp("like", { token: state.token, trackId: t.trackId });
+          state.likes.add(t.trackId);
+        }
+        el.likesPill.textContent = String(state.likes.size);
+        like.textContent = state.likes.has(t.trackId) ? "♥" : "♡";
+      } catch (e) {
+        console.error(e);
+        alert(e.message || String(e));
+      }
+    };
+
+    row.appendChild(tag);
+    row.appendChild(like);
+    card.appendChild(row);
+
+    card.onclick = () => {
+      // Build queue from what user is currently viewing (search/mode filtered)
+      const q = currentList();
+      state.queue = q;
+      // find index within queue
+      const qi = q.findIndex(x => x.trackId === t.trackId);
+      playIndex(qi >= 0 ? qi : idx).catch(err => {
+        console.error(err);
+        alert(err.message || String(err));
+      });
+    };
+
+    el.grid.appendChild(card);
+  }
+}
+
+function renderNowPlaying(track) {
+  const t = track || state.queue[state.currentIndex] || null;
+  if (!t) {
+    el.npTitle.textContent = "Nothing playing";
+    el.npArtist.textContent = "—";
+    el.npImg.src = "";
+    el.tCur.textContent = "0:00";
+    el.tDur.textContent = "0:00";
+    el.seek.value = 0;
+    return;
+  }
+
+  el.npTitle.textContent = displayTitle(t);
+  el.npArtist.textContent = displayArtist(t);
+  el.npImg.src = coverFor(t) || "";
+}
+
+// ----------------------- Player logic -----------------------
+async function playIndex(i) {
+  const t = state.queue[i];
+  if (!t) return;
+
+  state.currentIndex = i;
+
+  // META only: not playable
+  if (isMetaOnly(t)) {
+    state.playingMode = "none";
+    renderNowPlaying(t);
+    alert("This track is not playable yet (no audioUrl or embedUrl).");
+    return;
+  }
+
+  // SPOTIFY EMBED
+  if (isSpotifyEmbed(t)) {
+    openEmbed(t);
+    el.btnPlay.textContent = "▶"; // audio play state not relevant
+    return;
+  }
+
+  // AUDIO
+  if (!t.audioUrl) {
+    state.playingMode = "none";
+    renderNowPlaying(t);
+    alert("Track has no audio URL.");
+    return;
+  }
+
+  // Close embed if open
+  closeEmbed();
+
+  state.playingMode = "audio";
+  el.audio.src = t.audioUrl;
+
+  renderNowPlaying(t);
+
+  try {
+    await el.audio.play();
+    el.btnPlay.textContent = "❚❚";
+  } catch (e) {
+    el.btnPlay.textContent = "▶";
+    throw e;
+  }
+}
+
+function togglePlayPause() {
+  if (state.playingMode !== "audio") {
+    // If embed track is open, we can't control it reliably; just show modal if current is embed
+    const t = state.queue[state.currentIndex];
+    if (t && isSpotifyEmbed(t)) openEmbed(t);
+    return;
+  }
+
+  if (el.audio.paused) {
+    el.audio.play().then(() => el.btnPlay.textContent = "❚❚").catch(console.error);
+  } else {
+    el.audio.pause();
     el.btnPlay.textContent = "▶";
   }
 }
 
-function nextTrack(){
+function nextTrack() {
   if (!state.queue.length) return;
-  if (state.shuffle){
-    state.idx = Math.floor(Math.random() * state.queue.length);
+  const i = (state.currentIndex + 1) % state.queue.length;
+  playIndex(i).catch(console.error);
+}
+function prevTrack() {
+  if (!state.queue.length) return;
+  const i = (state.currentIndex - 1 + state.queue.length) % state.queue.length;
+  playIndex(i).catch(console.error);
+}
+
+// Audio events
+el.audio.addEventListener("loadedmetadata", () => {
+  el.tDur.textContent = fmtTime(el.audio.duration);
+});
+el.audio.addEventListener("timeupdate", () => {
+  el.tCur.textContent = fmtTime(el.audio.currentTime);
+  const dur = el.audio.duration || 0;
+  if (dur > 0) {
+    el.seek.value = Math.floor((el.audio.currentTime / dur) * 1000);
   } else {
-    state.idx++;
-  }
-  if (state.idx >= state.queue.length){
-    if (state.repeat) state.idx = 0;
-    else { state.idx = state.queue.length - 1; state.audio.pause(); el.btnPlay.textContent="▶"; return; }
-  }
-  playIndex(state.idx);
-}
-
-function prevTrack(){
-  if (!state.queue.length) return;
-  if (state.audio.currentTime > 3){
-    state.audio.currentTime = 0;
-    return;
-  }
-  state.idx--;
-  if (state.idx < 0){
-    if (state.repeat) state.idx = state.queue.length - 1;
-    else state.idx = 0;
-  }
-  playIndex(state.idx);
-}
-
-// Seek bar
-el.seekBar.addEventListener("click", (e) => {
-  const rect = el.seekBar.getBoundingClientRect();
-  const pct = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-  if (state.audio.duration && isFinite(state.audio.duration)){
-    state.audio.currentTime = pct * state.audio.duration;
+    el.seek.value = 0;
   }
 });
-state.audio.addEventListener("timeupdate", () => {
-  const cur = state.audio.currentTime || 0;
-  const dur = state.audio.duration || 0;
-  el.seekFill.style.width = `${dur > 0 ? (cur / dur) * 100 : 0}%`;
-  el.tCur.textContent = fmtTime(cur);
-  el.tDur.textContent = fmtTime(dur);
-});
-state.audio.addEventListener("ended", () => {
-  if (state.repeat) nextTrack();
-  else nextTrack();
+el.audio.addEventListener("ended", () => {
+  nextTrack();
 });
 
-// Volume
-el.vol.addEventListener("input", () => { state.audio.volume = Number(el.vol.value); });
+// Seek
+el.seek.addEventListener("input", () => {
+  if (state.playingMode !== "audio") return;
+  const dur = el.audio.duration || 0;
+  if (dur <= 0) return;
+  const pct = Number(el.seek.value) / 1000;
+  el.audio.currentTime = pct * dur;
+});
 
-// Player controls
-el.btnPlay.onclick = togglePlay;
-el.btnNext.onclick = nextTrack;
-el.btnPrev.onclick = prevTrack;
-
-// Toggles
-el.tglShuffle.onclick = () => {
-  state.shuffle = !state.shuffle;
-  el.tglShuffle.classList.toggle("on", state.shuffle);
-};
-el.tglRepeat.onclick = () => {
-  state.repeat = !state.repeat;
-  el.tglRepeat.classList.toggle("on", state.repeat);
-};
-el.tglCache.onclick = () => {
-  state.cacheAudio = !state.cacheAudio;
-  el.tglCache.classList.toggle("on", state.cacheAudio);
-  el.cacheLine.textContent = state.cacheAudio ? "Caching enabled" : "Caching disabled";
-  setTimeout(()=> el.cacheLine.textContent="", 1200);
-};
-
-// -------- Views / Nav ----------
-function goHome(){ state.view = "home"; state.currentPlaylistId = null; renderTracks(); }
-function goCatalog(){ state.view = "catalog"; state.currentPlaylistId = null; renderTracks(); }
-function goLikes(){ state.view = "likes"; state.currentPlaylistId = null; renderTracks(); }
-
-el.navHome.onclick = goHome;
-el.navCatalog.onclick = goCatalog;
-el.navLikes.onclick = () => { if (!state.token) openAuthModal(); else goLikes(); };
-
-el.chipHome.onclick = goHome;
-el.chipCatalog.onclick = goCatalog;
-el.chipLikes.onclick = () => { if (!state.token) openAuthModal(); else goLikes(); };
-
-el.btnSearch.onclick = async () => {
-  const q = el.q.value.trim();
-  if (!q){ renderTracks(); return; }
-  if (!state.token){ openAuthModal(); return; }
-  setStatus("Searching...");
-  try{
-    const res = await jsonp("search", { token: state.token, q });
-    state.view = "catalog";
-    state.currentPlaylistId = null;
-    renderTracks(res.tracks || []);
-  } catch(e){
-    setStatus(e.message);
-  }
-};
-
-el.btnClearSearch.onclick = () => {
-  el.q.value = "";
-  renderTracks();
-};
-
-// -------- Auth ----------
-function setLoggedOutUI(){
-  el.meLine.textContent = "Not logged in";
-  el.btnAuthOpen.style.display = "inline-flex";
-  el.btnLogout.style.display = "none";
-  el.btnCreatePlaylist.style.display = "none";
-  el.btnRefreshPlaylists.style.display = "none";
-  el.chipLikes.style.display = "none";
-  el.navLikes.style.display = "none";
-}
-
-function setLoggedInUI(){
-  el.meLine.textContent = state.me ? `Logged in as ${state.me.email}` : "Logged in";
-  el.btnAuthOpen.style.display = "none";
-  el.btnLogout.style.display = "inline-flex";
-  el.btnCreatePlaylist.style.display = "inline-flex";
-  el.btnRefreshPlaylists.style.display = "inline-flex";
-  el.chipLikes.style.display = "inline-flex";
-  el.navLikes.style.display = "flex";
-}
+// ----------------------- Wire UI -----------------------
+el.btnAuth.onclick = () => openAuthModal();
+el.authClose.onclick = () => closeAuthModal();
+el.authModal.addEventListener("click", (e) => { if (e.target === el.authModal) closeAuthModal(); });
 
 el.btnLogin.onclick = async () => {
-  setAuthStatus("Logging in...");
-  try{
-    const res = await jsonp("login", { email: el.email.value.trim(), password: el.pass.value });
-    state.token = res.token;
-    localStorage.setItem("mymusic_token", state.token);
-    setAuthStatus("Logged in.");
-    await boot(true);
+  el.authErr.textContent = "";
+  try {
+    const email = el.authEmail.value.trim();
+    const password = el.authPass.value.trim();
+    if (!email || !password) throw new Error("Enter email + password");
+    const res = await jsonp("login", { email, password });
+    setSignedIn(res.token, res.email || email);
     closeAuthModal();
-  } catch(e){
-    setAuthStatus(e.message);
+    await refreshAll();
+  } catch (e) {
+    el.authErr.textContent = e.message || String(e);
   }
 };
 
 el.btnSignup.onclick = async () => {
-  setAuthStatus("Creating account...");
-  try{
-    const res = await jsonp("signup", { email: el.email.value.trim(), password: el.pass.value });
-    state.token = res.token;
-    localStorage.setItem("mymusic_token", state.token);
-    setAuthStatus("Account created.");
-    await boot(true);
+  el.authErr.textContent = "";
+  try {
+    const email = el.authEmail.value.trim();
+    const password = el.authPass.value.trim();
+    if (!email || !password) throw new Error("Enter email + password");
+    const res = await jsonp("signup", { email, password });
+    setSignedIn(res.token, res.email || email);
     closeAuthModal();
-  } catch(e){
-    setAuthStatus(e.message);
+    await refreshAll();
+  } catch (e) {
+    el.authErr.textContent = e.message || String(e);
   }
 };
 
-el.btnLogout.onclick = () => {
-  localStorage.removeItem("mymusic_token");
-  state.token = "";
-  state.me = null;
-  location.reload();
+el.btnLogout.onclick = async () => {
+  setSignedOut();
+  state.tracks = [];
+  state.queue = [];
+  state.currentIndex = -1;
+  renderGrid();
+  renderNowPlaying(null);
 };
 
-// Playlists
-el.btnCreatePlaylist.onclick = async () => {
-  const name = el.plName.value.trim();
-  if (!name) return;
-  try{
-    await jsonp("playlist_create", { token: state.token, name });
-    el.plName.value = "";
-    await loadPlaylists();
-    renderPlaylists();
-  } catch(e){
-    alert(e.message);
-  }
-};
-el.btnRefreshPlaylists.onclick = async () => {
-  await loadPlaylists();
-  renderPlaylists();
-};
+el.btnRefresh.onclick = () => refreshAll().catch(e => alert(e.message || String(e)));
 
-// -------- Service worker ----------
-async function registerSW(){
-  if ("serviceWorker" in navigator){
-    try{ await navigator.serviceWorker.register("sw.js"); } catch {}
-  }
-}
+el.btnHome.onclick = () => { state.mode = "all"; renderGrid(); };
+el.btnLikes.onclick = () => { state.mode = "likes"; renderGrid(); };
 
-// -------- Boot ----------
-async function boot(forceFresh = false){
-  await registerSW();
+el.btnClear.onclick = () => { el.search.value = ""; renderGrid(); };
+el.search.addEventListener("input", () => renderGrid());
 
-  // Load cached catalog first (fast UI)
-  const cached = localStorage.getItem("mymusic_catalog");
-  if (cached){
-    try{ state.catalog = JSON.parse(cached); } catch {}
-  }
+el.btnPrev.onclick = () => prevTrack();
+el.btnNext.onclick = () => nextTrack();
+el.btnPlay.onclick = () => togglePlayPause();
 
-  // default view
-  renderTracks();
+el.embedClose.onclick = () => closeEmbed();
+el.embedModal.addEventListener("click", (e) => { if (e.target === el.embedModal) closeEmbed(); });
 
-  if (!state.token){
-    setLoggedOutUI();
-    setStatus("Log in to load your library.");
+el.btnImporter.onclick = () => {
+  if (!CONFIG.API_URL || CONFIG.API_URL.includes("PASTE_YOUR_GAS_EXEC_URL_HERE")) {
+    alert("Set CONFIG.API_URL in app.js first.");
     return;
   }
+  const u = new URL(CONFIG.API_URL);
+  u.searchParams.set("page", "admin");
+  window.open(u.toString(), "_blank", "noopener,noreferrer");
+};
 
-  // validate session
-  try{
-    await loadMe();
-  } catch(e){
-    setLoggedOutUI();
-    setStatus("Session expired. Please log in again.");
-    localStorage.removeItem("mymusic_token");
-    state.token = "";
+// ----------------------- Refresh -----------------------
+async function refreshAll() {
+  updateAuthUI();
+  if (!state.token) {
+    renderGrid();
+    renderNowPlaying(null);
     return;
   }
-
-  setLoggedInUI();
-
-  // fetch fresh
-  setStatus("Loading library...");
-  try{
-    await Promise.all([loadCatalog(), loadLikes(), loadPlaylists()]);
-    renderPlaylists();
-    renderTracks();
-    setStatus("");
-  } catch(e){
-    setStatus(e.message);
-  }
+  await loadCatalog();
+  await loadLikes();
+  renderGrid();
+  renderNowPlaying(null);
 }
 
-boot();
-
+(async function init() {
+  updateAuthUI();
+  // If user has a stored token, try loading data.
+  if (state.token) {
+    try { await refreshAll(); }
+    catch (e) {
+      console.warn("Token invalid or backend error:", e);
+      setSignedOut();
+      renderGrid();
+    }
+  } else {
+    renderGrid();
+  }
+})();
