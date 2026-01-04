@@ -1,15 +1,12 @@
 /* Streamify app.js - FULL FILE
-   Supports:
-   - GAS+Sheets JSONP backend
-   - Auth modal (login/signup)
-   - Catalog + search
-   - Audio tracks + Spotify embed tracks
+   - Auth modal
+   - Catalog + Search + Likes
+   - Audio player + Spotify embed modal
+   - Volume slider for audio (embed volume can't be controlled)
 */
 
 const CONFIG = {
-  // ✅ PUT YOUR WEB APP /exec URL HERE:
-  // Example: "https://script.google.com/macros/s/AKfycb.../exec"
-  API_URL: "https://script.google.com/macros/s/AKfycbz1b6U20wPzTbj80zPmkFjr1dA36fMcANZN1m_qzqCUh13ig7DNw5XhBYZ1Eh5F-r28/exec",
+  API_URL: "https://script.google.com/macros/s/AKfycbybXA6qf_CdUZPTScJ-CQMglbGy-jYGQVsN7jOBW9MPDp0YYwzxfpxRc6oJnlLGRZ8y/exec",
   TOKEN_KEY: "mymusic_token",
   EMAIL_KEY: "mymusic_email",
 };
@@ -17,12 +14,12 @@ const CONFIG = {
 const state = {
   token: localStorage.getItem(CONFIG.TOKEN_KEY) || "",
   email: localStorage.getItem(CONFIG.EMAIL_KEY) || "",
-  mode: "all",           // "all" | "likes"
+  mode: "all",
   tracks: [],
   likes: new Set(),
   queue: [],
   currentIndex: -1,
-  playingMode: "none",   // "audio" | "embed" | "none"
+  playingMode: "none", // "audio" | "embed" | "none"
 };
 
 const el = {
@@ -44,7 +41,6 @@ const el = {
 
   btnImporter: document.getElementById("btnImporter"),
 
-  // Player
   audio: document.getElementById("audio"),
   btnPrev: document.getElementById("btnPrev"),
   btnPlay: document.getElementById("btnPlay"),
@@ -56,65 +52,50 @@ const el = {
   npTitle: document.getElementById("npTitle"),
   npArtist: document.getElementById("npArtist"),
 
-  // Auth modal
+  vol: document.getElementById("vol"),
+  volMode: document.getElementById("volMode"),
+
   authModal: document.getElementById("authModal"),
   authClose: document.getElementById("authClose"),
-  authTitle: document.getElementById("authTitle"),
   authEmail: document.getElementById("authEmail"),
   authPass: document.getElementById("authPass"),
   authErr: document.getElementById("authErr"),
   btnLogin: document.getElementById("btnLogin"),
   btnSignup: document.getElementById("btnSignup"),
 
-  // Embed modal
   embedModal: document.getElementById("embedModal"),
   embedClose: document.getElementById("embedClose"),
   embedTitle: document.getElementById("embedTitle"),
   embedFrame: document.getElementById("embedFrame"),
 };
 
-// ----------------------- JSONP -----------------------
 function jsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
     if (!CONFIG.API_URL || CONFIG.API_URL.includes("PASTE_YOUR_GAS_EXEC_URL_HERE")) {
       reject(new Error("Set CONFIG.API_URL in app.js to your GAS /exec URL."));
       return;
     }
-
     const cbName = "__cb_" + Math.random().toString(36).slice(2);
     const url = new URL(CONFIG.API_URL);
-
     url.searchParams.set("action", action);
     url.searchParams.set("callback", cbName);
-
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null) continue;
       url.searchParams.set(k, String(v));
     }
-
     const script = document.createElement("script");
-    const cleanup = () => {
-      try { delete window[cbName]; } catch (_) {}
-      script.remove();
-    };
-
+    const cleanup = () => { try { delete window[cbName]; } catch (_) {} script.remove(); };
     window[cbName] = (data) => {
       cleanup();
       if (!data || data.ok === false) reject(new Error((data && data.error) || "API error"));
       else resolve(data);
     };
-
-    script.onerror = () => {
-      cleanup();
-      reject(new Error("Network error loading JSONP script"));
-    };
-
+    script.onerror = () => { cleanup(); reject(new Error("Network error loading JSONP script")); };
     script.src = url.toString();
     document.head.appendChild(script);
   });
 }
 
-// ----------------------- Helpers -----------------------
 function fmtTime(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
   const m = Math.floor(sec / 60);
@@ -122,13 +103,10 @@ function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function coverFor(t) {
-  return t.artworkUrl || "";
-}
+function coverFor(t) { return t.artworkUrl || ""; }
 
 function displayTitle(t) {
   if (t.title) return t.title;
-  // For embed rows imported by ID only, title might be blank.
   if (t.spotifyUrl) return "Spotify Track";
   return "Unknown Track";
 }
@@ -141,11 +119,12 @@ function displayArtist(t) {
 function isSpotifyEmbed(t) {
   return (t.sourceType === "spotify_embed") || (t.embedUrl && t.embedUrl.includes("open.spotify.com/embed"));
 }
-function isMetaOnly(t) {
-  return (t.sourceType === "meta_only") || (!t.audioUrl && !t.embedUrl);
-}
 function isAudioTrack(t) {
-  return !!t.audioUrl && (!t.sourceType || t.sourceType === "audio");
+  // treat anything with audioUrl as audio, regardless of sourceType
+  return !!t.audioUrl;
+}
+function isUnplayable(t) {
+  return !t.audioUrl && !t.embedUrl;
 }
 
 function requireTokenOrAuth() {
@@ -155,19 +134,14 @@ function requireTokenOrAuth() {
   }
 }
 
-// ----------------------- Auth UI -----------------------
 function openAuthModal() {
   el.authErr.textContent = "";
   el.authModal.style.display = "flex";
-  el.authTitle.textContent = "Sign in";
   el.authEmail.value = state.email || "";
   el.authPass.value = "";
   setTimeout(() => el.authEmail.focus(), 50);
 }
-
-function closeAuthModal() {
-  el.authModal.style.display = "none";
-}
+function closeAuthModal() { el.authModal.style.display = "none"; }
 
 function setSignedOut() {
   state.token = "";
@@ -177,7 +151,6 @@ function setSignedOut() {
   state.likes = new Set();
   updateAuthUI();
 }
-
 function setSignedIn(token, email) {
   state.token = token;
   state.email = email;
@@ -200,19 +173,32 @@ function updateAuthUI() {
   }
 }
 
-// ----------------------- Embed modal -----------------------
+function setVolumeMode(mode) {
+  if (!el.vol || !el.volMode) return;
+  if (mode === "embed") {
+    el.volMode.textContent = "EMBED";
+    el.vol.disabled = true;
+    el.vol.style.opacity = "0.4";
+  } else {
+    el.volMode.textContent = "AUDIO";
+    el.vol.disabled = false;
+    el.vol.style.opacity = "1";
+  }
+}
+
 function openEmbed(track) {
-  const title = `${displayTitle(track)} — ${displayArtist(track)}`;
-  el.embedTitle.textContent = title;
+  // stop audio
+  try { el.audio.pause(); } catch (_) {}
+  try { el.audio.src = ""; } catch (_) {}
+  state.playingMode = "embed";
+  setVolumeMode("embed");
+
+  el.embedTitle.textContent = `${displayTitle(track)} — ${displayArtist(track)}`;
   el.embedFrame.src = track.embedUrl || "";
   el.embedModal.style.display = "flex";
 
-  // Stop audio if any
-  try { el.audio.pause(); } catch (_) {}
-  try { el.audio.src = ""; } catch (_) {}
-
-  state.playingMode = "embed";
   renderNowPlaying(track);
+  el.btnPlay.textContent = "▶"; // bottom bar play button doesn't control iframe
 }
 
 function closeEmbed() {
@@ -221,14 +207,12 @@ function closeEmbed() {
   if (state.playingMode === "embed") state.playingMode = "none";
 }
 
-// ----------------------- Data load -----------------------
 async function loadCatalog() {
   requireTokenOrAuth();
   const res = await jsonp("catalog", { token: state.token, limit: 800, offset: 0 });
   state.tracks = Array.isArray(res.tracks) ? res.tracks : [];
   el.countPill.textContent = String(state.tracks.length);
 }
-
 async function loadLikes() {
   if (!state.token) { state.likes = new Set(); el.likesPill.textContent = "0"; return; }
   const res = await jsonp("likes", { token: state.token });
@@ -237,24 +221,15 @@ async function loadLikes() {
   el.likesPill.textContent = String(state.likes.size);
 }
 
-// ----------------------- Render -----------------------
 function currentList() {
   let list = state.tracks;
-
-  // Search filter
   const q = (el.search.value || "").trim().toLowerCase();
   if (q) {
-    list = list.filter(t => {
-      const s = `${t.title||""} ${t.artist||""} ${t.album||""}`.toLowerCase();
-      return s.includes(q);
-    });
+    list = list.filter(t => (`${t.title||""} ${t.artist||""} ${t.album||""} ${t.spotifyUrl||""}`.toLowerCase()).includes(q));
   }
-
-  // Mode filter
   if (state.mode === "likes") {
     list = list.filter(t => state.likes.has(t.trackId));
   }
-
   return list;
 }
 
@@ -328,10 +303,8 @@ function renderGrid() {
     card.appendChild(row);
 
     card.onclick = () => {
-      // Build queue from what user is currently viewing (search/mode filtered)
       const q = currentList();
       state.queue = q;
-      // find index within queue
       const qi = q.findIndex(x => x.trackId === t.trackId);
       playIndex(qi >= 0 ? qi : idx).catch(err => {
         console.error(err);
@@ -354,48 +327,35 @@ function renderNowPlaying(track) {
     el.seek.value = 0;
     return;
   }
-
   el.npTitle.textContent = displayTitle(t);
   el.npArtist.textContent = displayArtist(t);
   el.npImg.src = coverFor(t) || "";
 }
 
-// ----------------------- Player logic -----------------------
 async function playIndex(i) {
   const t = state.queue[i];
   if (!t) return;
 
   state.currentIndex = i;
 
-  // META only: not playable
-  if (isMetaOnly(t)) {
+  if (isUnplayable(t)) {
     state.playingMode = "none";
     renderNowPlaying(t);
-    alert("This track is not playable yet (no audioUrl or embedUrl).");
+    alert("This track is not playable (no audioUrl or embedUrl).");
     return;
   }
 
-  // SPOTIFY EMBED
   if (isSpotifyEmbed(t)) {
     openEmbed(t);
-    el.btnPlay.textContent = "▶"; // audio play state not relevant
     return;
   }
 
-  // AUDIO
-  if (!t.audioUrl) {
-    state.playingMode = "none";
-    renderNowPlaying(t);
-    alert("Track has no audio URL.");
-    return;
-  }
-
-  // Close embed if open
+  // audio
   closeEmbed();
-
   state.playingMode = "audio";
-  el.audio.src = t.audioUrl;
+  setVolumeMode("audio");
 
+  el.audio.src = t.audioUrl;
   renderNowPlaying(t);
 
   try {
@@ -408,12 +368,17 @@ async function playIndex(i) {
 }
 
 function togglePlayPause() {
-  if (state.playingMode !== "audio") {
-    // If embed track is open, we can't control it reliably; just show modal if current is embed
-    const t = state.queue[state.currentIndex];
-    if (t && isSpotifyEmbed(t)) openEmbed(t);
+  const t = state.queue[state.currentIndex];
+
+  // embed: we can only re-open / close, not control play/pause reliably
+  if (state.playingMode === "embed") {
+    if (el.embedModal.style.display === "flex") closeEmbed();
+    else if (t && isSpotifyEmbed(t)) openEmbed(t);
     return;
   }
+
+  // audio
+  if (state.playingMode !== "audio") return;
 
   if (el.audio.paused) {
     el.audio.play().then(() => el.btnPlay.textContent = "❚❚").catch(console.error);
@@ -434,24 +399,18 @@ function prevTrack() {
   playIndex(i).catch(console.error);
 }
 
-// Audio events
+// audio events
 el.audio.addEventListener("loadedmetadata", () => {
   el.tDur.textContent = fmtTime(el.audio.duration);
 });
 el.audio.addEventListener("timeupdate", () => {
   el.tCur.textContent = fmtTime(el.audio.currentTime);
   const dur = el.audio.duration || 0;
-  if (dur > 0) {
-    el.seek.value = Math.floor((el.audio.currentTime / dur) * 1000);
-  } else {
-    el.seek.value = 0;
-  }
+  el.seek.value = dur > 0 ? Math.floor((el.audio.currentTime / dur) * 1000) : 0;
 });
-el.audio.addEventListener("ended", () => {
-  nextTrack();
-});
+el.audio.addEventListener("ended", () => nextTrack());
 
-// Seek
+// seek
 el.seek.addEventListener("input", () => {
   if (state.playingMode !== "audio") return;
   const dur = el.audio.duration || 0;
@@ -460,7 +419,21 @@ el.seek.addEventListener("input", () => {
   el.audio.currentTime = pct * dur;
 });
 
-// ----------------------- Wire UI -----------------------
+// volume
+(function initVolume(){
+  const saved = Number(localStorage.getItem("streamify_vol") || "0.8");
+  const v = Math.min(1, Math.max(0, saved));
+  el.audio.volume = v;
+  if (el.vol) el.vol.value = String(Math.round(v * 100));
+
+  el.vol?.addEventListener("input", () => {
+    const val = Math.min(1, Math.max(0, Number(el.vol.value) / 100));
+    el.audio.volume = val;
+    localStorage.setItem("streamify_vol", String(val));
+  });
+})();
+
+// UI wiring
 el.btnAuth.onclick = () => openAuthModal();
 el.authClose.onclick = () => closeAuthModal();
 el.authModal.addEventListener("click", (e) => { if (e.target === el.authModal) closeAuthModal(); });
@@ -479,7 +452,6 @@ el.btnLogin.onclick = async () => {
     el.authErr.textContent = e.message || String(e);
   }
 };
-
 el.btnSignup.onclick = async () => {
   el.authErr.textContent = "";
   try {
@@ -495,7 +467,7 @@ el.btnSignup.onclick = async () => {
   }
 };
 
-el.btnLogout.onclick = async () => {
+el.btnLogout.onclick = () => {
   setSignedOut();
   state.tracks = [];
   state.queue = [];
@@ -505,10 +477,8 @@ el.btnLogout.onclick = async () => {
 };
 
 el.btnRefresh.onclick = () => refreshAll().catch(e => alert(e.message || String(e)));
-
 el.btnHome.onclick = () => { state.mode = "all"; renderGrid(); };
 el.btnLikes.onclick = () => { state.mode = "likes"; renderGrid(); };
-
 el.btnClear.onclick = () => { el.search.value = ""; renderGrid(); };
 el.search.addEventListener("input", () => renderGrid());
 
@@ -529,7 +499,6 @@ el.btnImporter.onclick = () => {
   window.open(u.toString(), "_blank", "noopener,noreferrer");
 };
 
-// ----------------------- Refresh -----------------------
 async function refreshAll() {
   updateAuthUI();
   if (!state.token) {
@@ -545,7 +514,7 @@ async function refreshAll() {
 
 (async function init() {
   updateAuthUI();
-  // If user has a stored token, try loading data.
+  setVolumeMode("audio");
   if (state.token) {
     try { await refreshAll(); }
     catch (e) {
